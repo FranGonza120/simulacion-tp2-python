@@ -1,4 +1,5 @@
-# Para ejecutar el codigo
+# Trabajo Practico 2 Simulación Grupo 1
+## Para ejecutar el codigo
 
 El proyecto corre para Python 3.12.*
 
@@ -18,3 +19,5 @@ pip install -r requirements.txt
 ```bash
 python main.py
 ```
+# Para el profesor
+En caso de que desee ejecutar el codigo sin instalar python, vaya a la viñeta que dice Ejecutables a la derecha y descargue el correspondiente para su Sistema Operativo
