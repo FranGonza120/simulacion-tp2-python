@@ -86,20 +86,25 @@ class PaginaResultados(PaginaBase):
         n_intervalo = 1
 
         while n_intervalo <= self.intervalos:
-            ls = round(li + rango - (0.0001 / 10), 4)
-            fo = sum(1 for x in self.datos if li <= x < ls)
+            if n_intervalo == self.intervalos:
+                ls = maxim
+                fo = sum(1 for x in self.datos if li <= x <= ls)
+            else:
+                ls = round(li + rango - (0.0001 / 10), 4)
+                fo = sum(1 for x in self.datos if li <= x < ls)
+                
             # Crear cada celda como no editable
             celda_intervalo = QTableWidgetItem(str(n_intervalo))
             celda_intervalo.setFlags(
                 celda_intervalo.flags() & ~Qt.ItemIsEditable)
 
-            celda_li = QTableWidgetItem(str(li))
+            celda_li = QTableWidgetItem(f"{li:.4f}")
             celda_li.setFlags(celda_li.flags() & ~Qt.ItemIsEditable)
 
-            celda_ls = QTableWidgetItem(str(ls))
+            celda_ls = QTableWidgetItem(f"{ls:.4f}")
             celda_ls.setFlags(celda_ls.flags() & ~Qt.ItemIsEditable)
 
-            celda_fo = QTableWidgetItem(str(fo))
+            celda_fo = QTableWidgetItem(f"{fo}")
             celda_fo.setFlags(celda_fo.flags() & ~Qt.ItemIsEditable)
 
             # Insertar en la tabla
