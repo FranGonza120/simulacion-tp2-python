@@ -16,8 +16,8 @@ class PaginaBase(QWidget):
         self.layout = QVBoxLayout()
         self.setLayout(self.layout)
 
-        self.boton_cerrar = QPushButton("✖")
-        self.boton_cerrar.setFixedSize(32, 32)
+        self.boton_cerrar = QPushButton("Cerrar")
+        self.boton_cerrar.setFixedSize(80, 32)
         self.boton_cerrar.setStyleSheet(
             "background-color: #e57373; color: white;")
         self.boton_cerrar.clicked.connect(self.cerrar)

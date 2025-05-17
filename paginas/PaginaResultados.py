@@ -1,385 +1,326 @@
 from PyQt5.QtWidgets import (
-    QLabel,
-    QPushButton,
-    QComboBox,
-    QHBoxLayout,
-    QVBoxLayout,
-    QStackedWidget,
-    QTableWidget,
-    QTableWidgetItem,
-    QPlainTextEdit,
-    QHeaderView,
-    QWidget,
+    QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QStackedWidget,
+    QTableWidget, QTableWidgetItem, QPlainTextEdit, QWidget, QHeaderView,
+    QComboBox
 )
 from PyQt5.QtCore import Qt
-from .PaginaBase import PaginaBase
-from math import exp, erf, sqrt
-from scipy.stats import chi2
 from datetime import datetime
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-import numpy as np
 
+from core.generadores import (
+    frecuencias_observadas, 
+    frecuencias_esperadas,
+    obtener_histograma, 
+    chi2_critico,
+    chi2_estadistico,
+    calcular_clases_chi2,
+    )
+
+from .PaginaBase import PaginaBase
 
 class PaginaResultados(PaginaBase):
-    def __init__(self, callback_volver, callback_cerrar, 
-                 datos: list[float], nombre: str = "", 
-                 intervalos: int = 10, *parametros):
-        super().__init__("Resultados de la Generación", callback_volver, callback_cerrar, )
-        self.datos = datos
-        self.distribucion = nombre
-        self.intervalos = intervalos
-        self.parametros = parametros # (μ,σ) ó (λ,) ó (A,B) para chi2
+    def __init__(
+        self, 
+        callback_volver, 
+        callback_cerrar, 
+        datos, 
+        nombre_dist="", 
+        intervalos=10,
+        media = None,
+        desviacion = None,
+        lmd = None,
+        A = None,
+        B = None,
+    ):
+        super().__init__("Resultados", callback_volver, callback_cerrar)
+        self.datos, self.intervalos = datos, intervalos
+        self.distribucion = nombre_dist
+        self.param_media, self.param_desv, self.param_lmd = media, desviacion, lmd
+        self.param_A, self.param_B = A, B
 
-        self.agregar_widget(
-            QLabel(f"<h2>Resultados para distribución: {self.distribucion}</h2>"))
-
+        self.agregar_widget(QLabel(f"<h2>Distribución: {self.distribucion}</h2>"))
         self.stack = QStackedWidget()
-        self.stack.addWidget(self.crear_tabla())
-        self.stack.addWidget(self.crear_histograma())
-        self.stack.addWidget(self.crear_serie())
-        self.stack.addWidget(self.crear_chi2())
+        self.stack.addWidget(self._widget_tabla())
+        self.stack.addWidget(self._widget_histograma())
+        self.stack.addWidget(self._widget_serie())
 
-        botones_layout = QHBoxLayout()
-        self.btnTabla = QPushButton("Mostrar Tabla de Frecuencias")
-        self.btnHist = QPushButton("Mostrar Histograma")
-        self.btnSerie = QPushButton("Mostrar Serie de Numeros")
-        self.btnChi2 = QPushButton("Prueba Chi-Cuadrado")
+        # Botones de navegación de vistas
+        botones = QHBoxLayout()
+        for txt, handler in [
+            ("Tabla de Frecuencias", self.mostrar_tabla),
+            ("Histograma", self.mostrar_histograma),
+            ("Serie", self.mostrar_serie)
+        ]:
+            btn = QPushButton(txt)
+            btn.clicked.connect(handler)
+            botones.addWidget(btn)
+        self.contenedor.addLayout(botones)
 
-        self.btnTabla.clicked.connect(self.mostrar_tabla)
-        self.btnHist.clicked.connect(self.mostrar_histograma)
-        self.btnSerie.clicked.connect(self.mostrar_serie)
-        self.btnChi2.clicked.connect(self.mostrar_chi2)
+        # Navegación interna de serie
+        self._crear_controles_serie()
+        self.contenedor.addWidget(self.stack)
 
-        botones_layout.addWidget(self.btnTabla)
-        botones_layout.addWidget(self.btnHist)
-        botones_layout.addWidget(self.btnSerie)
-        botones_layout.addWidget(self.btnChi2)
-        self.contenedor.addLayout(botones_layout)
-
-        # Botones navegación y exportar (solo visibles en vista Serie)
-        self.btn_anterior = QPushButton("← Anterior")
-        self.btn_siguiente = QPushButton("Siguiente →")
-        self.btn_exportar = QPushButton("Exportar .txt")
-        self.btn_anterior.clicked.connect(self.pagina_anterior)
-        self.btn_siguiente.clicked.connect(self.pagina_siguiente)
-        self.btn_exportar.clicked.connect(self.exportar_serie)
-
-        self.nav_layout = QHBoxLayout()
-        self.nav_layout.addWidget(self.btn_anterior)
-        self.nav_layout.addStretch()
-        self.nav_layout.addWidget(self.btn_exportar)
-        self.nav_layout.addStretch()
-        self.nav_layout.addWidget(self.btn_siguiente)
-        self.nav_layout_widget = QWidget()
-        self.nav_layout_widget.setLayout(self.nav_layout)
-        self.nav_layout_widget.hide()  # Oculto por defecto
-
-        self.contenedor.addWidget(self.nav_layout_widget)
-        self.boton_extra.hide()
-        self.agregar_widget(self.stack)
-
-    def crear_tabla(self):
-        tabla = QTableWidget(self.intervalos, 5)
+    def _widget_tabla(self):
+        contenedor = QWidget()
+        layout = QVBoxLayout(contenedor)
+        # Generar datos de tabla
+        datos_interv= frecuencias_observadas(self.datos, self.intervalos)
+        # extraer sólo límites para FE
+        limites = [(li, ls) for (li, ls, fo) in datos_interv]
+        
+        # Crear tabla con 5 columnas
+        tabla = QTableWidget(len(datos_interv), 5)
         tabla.setHorizontalHeaderLabels(
-            ["Intervalo N°", "Límite Inferior", "Límite Superior", "FO", "FE"])
-        tabla.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-
-        minim = min(self.datos)
-        maxim = max(self.datos)
-        alcance = maxim - minim
-        rango = alcance / self.intervalos
-        li = minim
-
-        n_intervalo = 1
-
-        while n_intervalo <= self.intervalos:
-            if n_intervalo == self.intervalos:
-                ls = maxim
-                fo = sum(1 for x in self.datos if li <= x <= ls)
-            else:
-                ls = round(li + rango - (0.0001 / 10), 4)
-                fo = sum(1 for x in self.datos if li <= x < ls)
-            
-            n = len(self.datos)
-            fe = n * ( self._cdf(ls) - self._cdf(li) )
-            
-            # Crear cada celda como no editable
-            celda_intervalo = QTableWidgetItem(str(n_intervalo))
-            celda_intervalo.setFlags(
-                celda_intervalo.flags() & ~Qt.ItemIsEditable)
-
-            celda_li = QTableWidgetItem(f"{li:.4f}")
-            celda_li.setFlags(celda_li.flags() & ~Qt.ItemIsEditable)
-
-            celda_ls = QTableWidgetItem(f"{ls:.4f}")
-            celda_ls.setFlags(celda_ls.flags() & ~Qt.ItemIsEditable)
-
-            celda_fo = QTableWidgetItem(f"{fo}")
-            celda_fo.setFlags(celda_fo.flags() & ~Qt.ItemIsEditable)
-
-            celda_fe = QTableWidgetItem(f"{fe:.4f}")
-            celda_fe.setFlags(celda_fe.flags() & ~Qt.ItemIsEditable)
-            
-            # Insertar en la tabla
-            tabla.setItem(n_intervalo - 1, 0, celda_intervalo)
-            tabla.setItem(n_intervalo - 1, 1, celda_li)
-            tabla.setItem(n_intervalo - 1, 2, celda_ls)
-            tabla.setItem(n_intervalo - 1, 3, celda_fo)
-            tabla.setItem(n_intervalo - 1, 4, celda_fe)
-
-            li = ls
-            n_intervalo += 1
-        return tabla
-
-    def crear_histograma(self):
-        fig = Figure(figsize=(6, 4), facecolor='#f9f9f9')
-        canvas = FigureCanvas(fig)
-        ax = fig.add_subplot(111)
-
-        # ✅ Calcular bins (bordes) explícitamente
-        frecuencias, bordes = np.histogram(self.datos, bins=self.intervalos)
-
-        # Dibujar histograma con los bordes definidos
-        ax.hist(
-            self.datos,
-            bins=bordes,
-            edgecolor='white',
-            linewidth=1.2,
-            color='#5c7cfa',
-            alpha=0.9
+            ["Intervalo N°", "Límite Inf.", "Límite Sup.", "FO", "FE"]
         )
-
-        # Mostrar los límites de los intervalos en el eje X
-        etiquetas = [f"{b:.2f}" for b in bordes]
-        ax.set_xticks(bordes)
-        ax.set_xticklabels(etiquetas, rotation=45, ha='right', fontsize=9)
-
-        # Estética
-        ax.set_title(f"Histograma de Frecuencias de Distribución {self.distribucion}", fontsize=14,
-                     fontweight='bold', color='#343a40')
-        ax.set_xlabel("Límites de Intervalos", fontsize=12)
-        ax.set_ylabel("Frecuencia Observada", fontsize=12)
-        ax.tick_params(axis='both', labelsize=10)
-        ax.grid(True, linestyle='--', linewidth=0.5, alpha=0.5)
-        ax.set_facecolor('#ffffff')
-
-        fig.subplots_adjust(bottom=0.25)
-
-        return canvas
+        tabla.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        
+        # Calcular FE según distribución
+        total = len(self.datos)
+        if self.distribucion == "Uniforme":
+            params = (self.param_A, self.param_B)
+        elif self.distribucion == "Exponencial Negativa":
+            params = (self.param_lmd,)
+        else:  # "Normal"
+            params = (self.param_media, self.param_desv)
+        fe_list = frecuencias_esperadas(limites, total, self.distribucion, params)
+        
+        # Poblar Tabla
+        for i, (li, ls, fo) in enumerate(datos_interv):
+            valores = [
+                i + 1,
+                f"{li:.4f}",
+                f"{ls:.4f}",
+                fo,
+                f"{fe_list[i]:.4f}",
+            ]
+            for j, v in enumerate(valores):
+                item = QTableWidgetItem(str(v))
+                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                tabla.setItem(i, j, item)
+        layout.addWidget(tabla)
+        
+        # Crear Tabla de chi2
+        layout.addLayout(self._crear_seccion_chi2())
+        
+        return contenedor
 
     def actualizar_critico(self):
-            """
-            Recalcula y muestra el valor crítico de χ²
-            según el df = k − 1 − p (p = nº parámetros estimados).
-            """
-            # Nivel de significación
-            alpha = float(self.alpha_combo.currentText())
-            # p = nº parámetros estimados por distribución
-            if self.distribucion == "Uniforme":
-                p = 0
-            elif self.distribucion == "Exponencial Negativa":
-                p = 1
-            elif self.distribucion == "Normal":
-                p = 2
-            else:
-                p = 0
-
-            # grados de libertad
-            df = self.intervalos - 1 - p
-            # valor crítico para cola derecha
-            crit = chi2.ppf(1 - alpha, df)
-            # Actualizamos label
-            self.lbl_critico.setText(f"χ² crítico (df={df}, α={alpha}): {crit:.4f}")
-
-
-
-    def crear_chi2(self):
         """
-        Construye la pestaña de χ²: selector de α, valor crítico y tabla.
+        Actualiza el label con el valor crítico de χ² según el valor
+        seleccionado en el QComboBox de alpha.
         """
-        cont = QWidget()
-        layout = QVBoxLayout()
+        alpha = float(self.alpha_combo.currentText())
+        k = len(self._agrupadas_chi2)
+        grad_lib, p_crit = chi2_critico(k, self._m_chi2, alpha)
+        self.lbl_critico.setText(f"χ² Tabla (Grad Lib={grad_lib}, Alpha={alpha}): {p_crit:.4f}")
 
-        # ——— Selector de nivel de significación α ———
-        self.alpha_combo = QComboBox()
-        self.alpha_combo.addItems(["0.1", "0.05", "0.025", "0.01", "0.005"])
-        self.alpha_combo.setCurrentText("0.05")
-        self.alpha_combo.currentTextChanged.connect(self.actualizar_critico)
-        layout.addWidget(QLabel("Nivel de significación α:"))
-        layout.addWidget(self.alpha_combo)
-
-        # Label donde mostraremos el χ² crítico
-        self.lbl_critico = QLabel()
-        layout.addWidget(self.lbl_critico)
-        # Tabla de χ²
-        layout.addWidget(self.crear_chi2_tabla())
-        
-        # Mantén los botones de navegación/exportar si lo necesitas
-        # layout.addWidget(self.nav_layout_widget)
-
-        cont.setLayout(layout)
-
-        # Inicializar el valor crítico
-        self.actualizar_critico()
-
-        return cont
-
-
-    def crear_chi2_tabla(self):
-        """
-        Construye un QTableWidget con la tabla de Chi²:
-        - calcula FO y FE a partir de histogramas y CDF normal
-        - agrupa clases hasta FE>=5
-        - calcula (FO-FE)^2/FE por grupo
-        """
-        
-        
-        # --- 0) asegurarnos de que self.datos sólo contenga los valores
-        arr = np.array(self.datos)
-        if arr.ndim > 1:
-            data = arr[:, 1]   # tomo la segunda columna
+        if self._chi2_calculado > p_crit:
+            self.lbl_resultado.setText("Se rechaza la H0.")
         else:
-            data = arr
-        
-        # --- 1) calcular FO y FE por clase
-        frecuencias, bordes = np.histogram(data, bins=self.intervalos)
-        n = len(data)
+            self.lbl_resultado.setText("No se tiene suficiente información para rechazar H0.")
 
-        clases = []
-        for i, fo in enumerate(frecuencias):
-            li, ls = bordes[i], bordes[i+1]
-            fe = n * ( self._cdf(ls) - self._cdf(li) )
-            clases.append({'li': li, 'ls': ls, 'fo': int(fo), 'fe': fe})
+        return p_crit
 
-        # --- 2) agrupar hasta FE>=5
+    def agrupar_intervalos_chi2(self, clases):
+        """
+        Agrupa los intervalos de la tabla de χ² hasta que cada grupo
+        tenga FE >= 5. Devuelve la lista de grupos agrupados.
+        """
         agrupadas = []
         current = clases[0].copy()
         for c in clases[1:]:
             if current['fe'] < 5:
-                # extiendo el grupo actual
                 current['ls'] = c['ls']
                 current['fo'] += c['fo']
                 current['fe'] += c['fe']
             else:
                 agrupadas.append(current)
                 current = c.copy()
-        # fusionar resto si quedó FE<5
+                
         if current['fe'] < 5 and agrupadas:
             prev = agrupadas[-1]
-            prev['ls']  = current['ls']
+            prev['ls'] = current['ls']
             prev['fo'] += current['fo']
             prev['fe'] += current['fe']
         else:
             agrupadas.append(current)
+        
+        return agrupadas
 
-        # --- 3) construir tabla de Chi²
+    def _get_tabla_chi2(self, agrupadas):
+        """
+        Crea una tabla QTableWidget con los resultados de χ² agrupados:
+        - cada fila es un grupo de intervalos
+        - cada columna es:
+            - Desde: límite inferior del grupo
+            - Hasta: límite superior del grupo
+            - FO: frecuencia observada en el grupo
+            - FE: frecuencia esperada en el grupo
+            - χ²: (FO - FE)^2 / FE para cada grupo
+            - χ² Acumulado: suma de los χ² de cada grupo
+        """
+        
         filas = len(agrupadas)
         tabla = QTableWidget(filas, 6)
-        tabla.setHorizontalHeaderLabels([
-            "Desde", "Hasta", "FO", "FE", "χ²", "χ² Acumulado"
-        ])
+        tabla.setHorizontalHeaderLabels(
+            ["Desde", "Hasta", "FO", "FE", "χ²", "χ² Acumulado"]
+        )
         tabla.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-
+        
         chi2_acum = 0.0
         for k, grp in enumerate(agrupadas):
             fo_k = grp['fo']
             fe_k = grp['fe']
-            chi2 = (fo_k - fe_k)**2 / fe_k
-            chi2_acum += chi2
+            chi2_val = (fo_k - fe_k) ** 2 / fe_k
+            chi2_acum += chi2_val
 
-            cells = [
-                QTableWidgetItem(f"{grp['li']:.4f}"),
-                QTableWidgetItem(f"{grp['ls']:.4f}"),
-                QTableWidgetItem(str(fo_k)),
-                QTableWidgetItem(f"{fe_k:.4f}"),
-                QTableWidgetItem(f"{chi2:.4f}"),
-                QTableWidgetItem(f"{chi2_acum:.4f}")
+            datos_fila = [
+                f"{grp['li']:.4f}",
+                f"{grp['ls']:.4f}",
+                str(fo_k),
+                f"{fe_k:.4f}",
+                f"{chi2_val:.4f}",
+                f"{chi2_acum:.4f}",
             ]
-            for col, item in enumerate(cells):
+            for col, txt in enumerate(datos_fila):
+                item = QTableWidgetItem(txt)
                 item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                 tabla.setItem(k, col, item)
-
-        # (Opcional) podrías exponer chi2_total y gl en algún widget aparte
-        # self.chi2_value = chi2_total
-        # self.grados_libertad = filas - 1 - self.parametros_estimados
-
+                
         return tabla
 
-    def crear_serie(self):
-        self.texto_serie = QPlainTextEdit()
-        self.texto_serie.setReadOnly(True)
-
-        self.pagina_actual = 0
-        self.items_por_pagina = 10000
-        self.total_paginas = (len(self.datos) - 1) // self.items_por_pagina + 1
-        self.mostrar_pagina()
-
-        return self.texto_serie
-
-    def mostrar_pagina(self):
-        inicio = self.pagina_actual * self.items_por_pagina
-        fin = min(len(self.datos), inicio + self.items_por_pagina)
-        fragmento = ', '.join(f"{x:.4f}" for x in self.datos[inicio:fin])
-        self.texto_serie.setPlainText(
-            f"[{inicio + 1}-{fin}] de {len(self.datos)}:\n{fragmento}")
-
-    def pagina_anterior(self):
-        if self.pagina_actual > 0:
-            self.pagina_actual -= 1
-            self.mostrar_pagina()
-
-    def pagina_siguiente(self):
-        if self.pagina_actual < self.total_paginas - 1:
-            self.pagina_actual += 1
-            self.mostrar_pagina()
-
-    @staticmethod
-    def redondear(x):
-        if x >= 0:
-            return int(x + 0.5)
+    def _crear_seccion_chi2(self):
+        if self.distribucion == "Uniforme":
+            m = 0
+            params = (self.param_A, self.param_B)
+        elif self.distribucion == "Exponencial Negativa":
+            m = 1
+            params = (self.param_lmd,)
         else:
-            return int(x - 0.5)
+            m = 2
+            params = (self.param_media, self.param_desv)
 
-    def frecuencia_en_intervalo(datos, li, ls):
-        return sum(1 for x in datos if li <= x < ls)
+        clases = calcular_clases_chi2(self.datos, self.intervalos, self.distribucion, params)
+        agrupadas = self.agrupar_intervalos_chi2(clases)
 
-    def exportar_serie(self):
-        try:
-            fecha = datetime.now().strftime('%Y%m%d_%H%M%S')
-            nom_archivo = f"serie_exportada_{fecha}.txt"
-            with open(nom_archivo, "w") as f:
-                f.write(', '.join(f"{x:.4f}" for x in self.datos))
-        except Exception as e:
-            print("Error al exportar:", e)
+        # Calcula el χ² observado
+        chi2_calc, _ = chi2_estadistico(
+            [c['fo'] for c in agrupadas],
+            [c['fe'] for c in agrupadas],
+            m
+        )
+        
+        # Gaurdar valores en contexto
+        self._agrupadas_chi2 = agrupadas
+        self._m_chi2 = m
+        self._chi2_calculado = chi2_calc
 
+        # Widget contenedor
+        layout = QVBoxLayout()
+
+        # Seleccion de alpha
+        layout.addWidget(QLabel("Nivel de significancia Alpha:"))
+        self.alpha_combo = QComboBox()
+        for alpha in ["0.5","0.1","0.05","0.025","0.01","0.005"]:
+            self.alpha_combo.addItem(alpha)
+        self.alpha_combo.setCurrentText("0.05")
+        self.alpha_combo.currentTextChanged.connect(self.actualizar_critico)
+        layout.addWidget(self.alpha_combo)
+
+        # Etiquetas de resultado
+        self.lbl_critico = QLabel()
+        self.lbl_calculado = QLabel(f"χ² calculado: {chi2_calc:.4f}")
+        self.lbl_resultado = QLabel()
+        layout.addWidget(self.lbl_critico)
+        layout.addWidget(self.lbl_calculado)
+        layout.addWidget(self.lbl_resultado)
+
+        # Tabla de χ²
+        tabla = self._get_tabla_chi2(agrupadas)
+        layout.addWidget(tabla)
+
+        # Inicializa las etiquetas
+        self.actualizar_critico()
+        return layout
+
+    def _widget_histograma(self):
+        _, bins = obtener_histograma(self.datos, self.intervalos)
+        fig = Figure(figsize=(6,6))
+        ax = fig.add_subplot(111)
+        
+        # Dibujar histograma
+        ax.hist(
+            self.datos, 
+            bins=bins, 
+            edgecolor='white', 
+            linewidth=1.2,
+            color='#5c7cfa',
+            alpha=0.9
+        )
+        
+        # Mostrar los límites de los intervalos en el eje X
+        etiquetas = [f"{b:.2f}" for b in bins]
+        ax.set_xticks(bins)
+        ax.set_xticklabels(etiquetas, rotation=45, ha='right', fontsize=9)
+        
+        # Detalles
+        ax.set_title(f"Histograma de la Distribución {self.distribucion}", fontweight='bold')
+        ax.set_xlabel("Intervalos", fontsize=12)
+        ax.set_ylabel("Frecuencia Observada", fontsize=12)
+        ax.tick_params(axis='both')
+        ax.grid(True, linestyle='--', linewidth=0.5, alpha=0.5)
+        fig.subplots_adjust(bottom=0.25)
+        return FigureCanvas(fig)
+
+    def _widget_serie(self):
+        self.texto = QPlainTextEdit(readOnly=True)
+        self.pagina, items_por_pagina = 0, 10000
+        self.max_pag = (len(self.datos)-1) // items_por_pagina
+        self._mostrar_pagina(items_por_pagina)
+        return self.texto
+
+    def _crear_controles_serie(self):
+        self.nav = QWidget()
+        layout = QHBoxLayout(self.nav)
+        for txt, cb in [("←", self._ant), ("Exportar", self._exp), ("→", self._sig)]:
+            btn = QPushButton(txt)
+            btn.clicked.connect(cb)
+            layout.addWidget(btn)
+        self.nav.hide()
+        self.contenedor.addWidget(self.nav)
+
+    def _mostrar_pagina(self, items_por_pagina):
+        inicio = self.pagina * items_por_pagina
+        fin = min(len(self.datos), inicio + items_por_pagina)
+        txt = ', '.join(f"{x:.4f}" for x in self.datos[inicio:fin])
+        self.texto.setPlainText(f"[{inicio+1}-{fin}] de {len(self.datos)}:\n{txt}")
+
+    def _ant(self): 
+        if self.pagina > 0:
+            self.pagina -= 1
+            self._mostrar_pagina(10000)
+            
+    def _sig(self):
+        if self.pagina < self.max_pag:
+            self.pagina += 1
+            self._mostrar_pagina(10000)
+            
+    def _exp(self):
+        fn = f"serie_{datetime.now():%Y%m%d_%H%M%S}.txt"
+        with open(fn,"w") as f:
+            f.write(', '.join(f"{x:.4f}" for x in self.datos))
+
+    # Vistas
     def mostrar_tabla(self):
         self.stack.setCurrentIndex(0)
-        self.nav_layout_widget.hide()
-
+        self.nav.hide()
+        
     def mostrar_histograma(self):
         self.stack.setCurrentIndex(1)
-        self.nav_layout_widget.hide()
-
+        self.nav.hide()
+        
     def mostrar_serie(self):
         self.stack.setCurrentIndex(2)
-        self.nav_layout_widget.show()
-        
-    def mostrar_chi2(self):
-        self.stack.setCurrentIndex(3)
-        self.nav_layout_widget.hide()
-
-    def _cdf(self, x):
-        """Función de distribución acumulada de la dist. teórica."""
-        if self.distribucion == "Uniforme":
-            A, B = self.parametros
-            # CDF uniforme truncada en [A,B]
-            return max(0.0, min(1.0, (x - A) / (B - A)))
-        elif self.distribucion == "Exponencial Negativa":
-            (lmd,) = self.parametros
-            return 1 - exp(-lmd * x)
-        elif self.distribucion == "Normal":
-            media, desv = self.parametros
-            return 0.5 * (1 + erf((x - media) / (desv * sqrt(2))))
-        else:
-            return 0.0
+        self.nav.show()

@@ -1,41 +1,49 @@
 import sys
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QStackedWidget
+
+from core.generadores import (
+    generar_numeros_pseudoaleatorios,
+    darDistExp,
+    darDistNorm,
+    darDistUnifAB,
+)
+from core.utilidades import aplicar_estilo
+
 from paginas.PaginaInicio import PaginaInicio
 from paginas.PaginaElegirDist import PaginaElegirDist
 from paginas.PaginaValsExp import PaginaValsExp
 from paginas.PaginaValsNorm import PaginaValsNorm
 from paginas.PaginaValsUnif import PaginaValsUnif
 from paginas.PaginaResultados import PaginaResultados
-from core.generadores import generar_numeros_pseudoaleatorios, darDistExp, darDistNorm, darDistUnifAB
-from core.utilidades import aplicar_estilo
 
 
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Generador de Variables Aleatorias")
-        self.setGeometry(100, 100, 800, 700)
-
-        self.tema_actual = "oscuro"  # default
+        self.setGeometry(100, 100, 800, 900)
 
         # Layout principal
-        main_layout = QVBoxLayout()
-        self.setLayout(main_layout)
-
-        # Stack principal con las páginas
+        main_layout = QVBoxLayout(self)
         self.stack = QStackedWidget()
         main_layout.addWidget(self.stack)
 
         # Página inicial
-        self.pagina_inicio = PaginaInicio(
-            self.elegir_dist, self.volver, self.cerrar_aplicacion)
-        self.stack.addWidget(self.pagina_inicio)
+        inicio = PaginaInicio(
+            callback_seleccion=self.elegir_dist,
+            callback_volver=self.volver,
+            callback_cerrar=self.cerrar_aplicacion,
+        )
+        self.stack.addWidget(inicio)
 
     def elegir_dist(self):
-        pagina_elegir = PaginaElegirDist(
-            self.ir_a_parametros, self.volver, self.cerrar_aplicacion)
-        self.stack.addWidget(pagina_elegir)
-        self.stack.setCurrentWidget(pagina_elegir)
+        elegir = PaginaElegirDist(
+            callback_seleccion=self.ir_a_parametros,
+            callback_volver=self.volver,
+            callback_cerrar=self.cerrar_aplicacion,
+        )
+        self.stack.addWidget(elegir)
+        self.stack.setCurrentWidget(elegir)
 
     def ir_a_parametros(self, distribucion, cantidad, intervalos):
         self.distribucion = distribucion
@@ -44,37 +52,67 @@ class MainWindow(QWidget):
 
         if distribucion == "Normal":
             pagina = PaginaValsNorm(
-                cantidad, intervalos, self.ir_a_resultados, self.volver, self.cerrar_aplicacion)
+                cantidad,
+                intervalos,
+                callback_generado=self.ir_a_resultados,
+                callback_volver=self.volver,
+                callback_cerrar=self.cerrar_aplicacion,
+            )
         elif distribucion == "Exponencial Negativa":
             pagina = PaginaValsExp(
-                cantidad, intervalos, self.ir_a_resultados, self.volver, self.cerrar_aplicacion)
-        elif distribucion == "Uniforme":
+                cantidad,
+                intervalos,
+                callback_generado=self.ir_a_resultados,
+                callback_volver=self.volver,
+                callback_cerrar=self.cerrar_aplicacion,
+            )
+        else:  # Uniforme
             pagina = PaginaValsUnif(
-                cantidad, intervalos, self.ir_a_resultados, self.volver, self.cerrar_aplicacion)
+                cantidad,
+                intervalos,
+                callback_generado=self.ir_a_resultados,
+                callback_volver=self.volver,
+                callback_cerrar=self.cerrar_aplicacion,
+            )
 
         self.stack.addWidget(pagina)
         self.stack.setCurrentWidget(pagina)
 
-    def ir_a_resultados(self, tipo, cantidad, intervalos, *dist_params):
+    def ir_a_resultados(self, distribucion, cantidad, *params):
         datos = generar_numeros_pseudoaleatorios(cantidad)
-        if tipo == "Normal":
-            datos = darDistNorm(datos, *dist_params)
-        elif tipo == "Exponencial Negativa":
-            datos = darDistExp(datos, *dist_params)
-        elif tipo == "Uniforme":
-            datos = darDistUnifAB(datos, *dist_params)
+        media = None
+        desviacion = None
+        lmd = None
+        val_A = None
+        val_B = None
         
-        pagina_resultados = PaginaResultados(
-            self.volver,
-            self.cerrar_aplicacion,
-            datos,
-            tipo,
-            intervalos,
-            *dist_params
+        if distribucion == "Normal":
+            # PaginaValsNorm te pasa (cantidad, intervalos, media, desviacion)
+            datos = darDistNorm(datos, *params[1:])
+            media, desviacion = params[1], params[2]
+        elif distribucion == "Exponencial Negativa":
+            # PaginaValsExp te pasa (cantidad, intervalos, lmd)
+            datos = darDistExp(datos, *params[1:])
+            lmd, = params[1:]
+        else:  # Uniforme
+            # PaginaValsUnif te pasa (cantidad, intervalos, A, B)
+            datos = darDistUnifAB(datos, *params[1:])
+            val_A, val_B = params[1], params[2]
+
+        pagina = PaginaResultados(
+            callback_volver=self.volver,
+            callback_cerrar=self.cerrar_aplicacion,
+            datos=datos,
+            nombre_dist=distribucion,
+            intervalos=self.intervalos,
+            media=media,
+            desviacion=desviacion,
+            lmd=lmd,
+            A=val_A,
+            B=val_B,
         )
-                
-        self.stack.addWidget(pagina_resultados)
-        self.stack.setCurrentWidget(pagina_resultados)
+        self.stack.addWidget(pagina)
+        self.stack.setCurrentWidget(pagina)
 
     def volver(self, pagina_actual):
         self.stack.removeWidget(pagina_actual)
