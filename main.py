@@ -55,17 +55,24 @@ class MainWindow(QWidget):
         self.stack.addWidget(pagina)
         self.stack.setCurrentWidget(pagina)
 
-    def ir_a_resultados(self, tipo, cantidad, *parametros):
+    def ir_a_resultados(self, tipo, cantidad, intervalos, *dist_params):
         datos = generar_numeros_pseudoaleatorios(cantidad)
         if tipo == "Normal":
-            datos = darDistNorm(datos, *parametros[1:])
+            datos = darDistNorm(datos, *dist_params)
         elif tipo == "Exponencial Negativa":
-            datos = darDistExp(datos, *parametros[1:])
+            datos = darDistExp(datos, *dist_params)
         elif tipo == "Uniforme":
-            datos = darDistUnifAB(datos, *parametros[1:])
-
+            datos = darDistUnifAB(datos, *dist_params)
+        
         pagina_resultados = PaginaResultados(
-            self.volver, self.cerrar_aplicacion, datos, tipo, self.intervalos)
+            self.volver,
+            self.cerrar_aplicacion,
+            datos,
+            tipo,
+            intervalos,
+            *dist_params
+        )
+                
         self.stack.addWidget(pagina_resultados)
         self.stack.setCurrentWidget(pagina_resultados)
 
