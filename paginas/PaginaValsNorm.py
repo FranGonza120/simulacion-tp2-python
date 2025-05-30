@@ -13,6 +13,7 @@ class PaginaValsNorm(PaginaBase):
         self.entrada_md.setDecimals(4)
         self.entrada_md.setSingleStep(0.0001)
         self.entrada_md.setValue(0)
+        self.entrada_md.setRange(-1e6, 1e6)
 
         self.entrada_desv = QDoubleSpinBox()
         self.entrada_desv.setDecimals(4)
